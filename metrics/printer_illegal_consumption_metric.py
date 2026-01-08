@@ -9,14 +9,14 @@ from metrics.base_metric import BaseMetric
 
 class PrinterIllegalConsumptionMetric(BaseMetric):
     """
-    Kara, jeśli toner/papier spada mimo że drukarka nie jest ON.
-    To łapie klasy błędów typu: agent konsumuje zasoby gdy urządzenie jest OFF.
+    Penalty when toner/paper decreases even though the printer is not ON.
+    This catches classes of bugs where resources are consumed while the device is OFF.
     """
 
     def __init__(self, penalty_per_tick: float = 2.0):
         super().__init__(
             name="printer_illegal_consumption",
-            description="Kara gdy toner/papier maleje mimo że drukarka nie jest ON",
+            description="Penalty when toner/paper decreases while the printer is not ON",
         )
         self.penalty_per_tick = penalty_per_tick
 

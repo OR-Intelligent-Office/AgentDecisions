@@ -9,13 +9,13 @@ from metrics.base_metric import BaseMetric
 
 class PrinterWasteMetric(BaseMetric):
     """
-    Kara gdy drukarka jest ON mimo braku osób i braku trwającego spotkania.
+    Penalty when the printer is ON despite no people and no ongoing meeting.
     """
 
     def __init__(self, penalty_per_tick: float = 0.5):
         super().__init__(
             name="printer_waste",
-            description="Kara gdy drukarka jest ON mimo braku osób i spotkań",
+            description="Penalty when printer is ON despite no people and no meetings",
         )
         self.penalty_per_tick = penalty_per_tick
 

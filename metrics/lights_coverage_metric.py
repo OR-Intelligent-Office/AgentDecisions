@@ -9,14 +9,13 @@ from metrics.base_metric import BaseMetric
 
 class LightsCoverageMetric(BaseMetric):
     """
-    Kara, jeśli w pokoju jest aktywność (spotkanie trwa LUB są osoby),
-    a wszystkie światła są OFF.
+    Penalty when a room is active (meeting OR people present) and all lights are OFF.
     """
 
     def __init__(self, penalty_per_tick: float = 1.0):
         super().__init__(
             name="lights_coverage",
-            description="Kara gdy w pokoju jest spotkanie/osoby, a wszystkie światła są OFF",
+            description="Penalty when a room is active (meeting/people) and all lights are OFF",
         )
         self.penalty_per_tick = penalty_per_tick
 

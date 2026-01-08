@@ -16,7 +16,7 @@ class LightsDuringMeetingsMetric(BaseMetric):
     ):
         super().__init__(
             name="lights_during_meetings",
-            description="Sprawdza czy światła są włączone podczas wszystkich spotkań",
+            description="Checks whether lights are turned on during meetings (legacy metric)",
         )
         self.penalty_per_meeting = penalty_per_meeting
         self.penalty_per_minute = penalty_per_minute

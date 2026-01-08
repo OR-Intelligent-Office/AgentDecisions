@@ -7,8 +7,8 @@ from models.data_models import EnvironmentSnapshot
 
 def sim_duration_minutes(snapshots: List[EnvironmentSnapshot]) -> float:
     """
-    Czas symulacji (na podstawie EnvironmentState.simulationTime), w minutach.
-    Używamy go do normalizacji kar: penalty_avg_per_sim_minute.
+    Simulation duration (based on EnvironmentState.simulationTime), in minutes.
+    Used to normalize penalties: penalty_avg_per_sim_minute.
     """
     if len(snapshots) < 2:
         return 0.0

@@ -9,15 +9,14 @@ from metrics.base_metric import BaseMetric
 
 class PrinterAvailabilityMetric(BaseMetric):
     """
-    Kara gdy w pokoju jest aktywność (osoby lub spotkanie),
-    drukarka ma zasoby >0 i brak awarii zasilania,
-    a mimo to drukarka nie jest ON.
+    Penalty when the room is active (people or meeting), the printer has resources (>0),
+    there is no power outage, and the printer is still not ON.
     """
 
     def __init__(self, penalty_per_tick: float = 1.0):
         super().__init__(
             name="printer_availability",
-            description="Kara gdy drukarka jest OFF podczas aktywności (osoby/spotkanie) mimo zasobów",
+            description="Penalty when printer is OFF during activity (people/meeting) despite having resources",
         )
         self.penalty_per_tick = penalty_per_tick
 

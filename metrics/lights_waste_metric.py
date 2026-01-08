@@ -9,13 +9,13 @@ from metrics.base_metric import BaseMetric
 
 class LightsWasteMetric(BaseMetric):
     """
-    Kara, gdy w pokoju nie ma osób i nie ma trwającego spotkania, a jakiekolwiek światło jest ON.
+    Penalty when there are no people and no ongoing meeting in the room, but any light is ON.
     """
 
     def __init__(self, penalty_per_tick: float = 0.5):
         super().__init__(
             name="lights_waste",
-            description="Kara gdy światła są ON mimo braku osób i spotkań",
+            description="Penalty when lights are ON despite no people and no meetings",
         )
         self.penalty_per_tick = penalty_per_tick
 

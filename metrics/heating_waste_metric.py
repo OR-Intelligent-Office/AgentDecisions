@@ -7,16 +7,16 @@ from metrics.base_metric import BaseMetric
 
 class HeatingWasteMetric(BaseMetric):
     """
-    Ocena 'kosztu'/marnowania: kara za sytuacje, gdzie ogrzewanie jest włączone,
-    mimo że (wg prostego heurystycznego kryterium) nie ma takiej potrzeby.
+    Waste/cost metric: penalize situations where heating is ON even though it is not needed
+    (based on a simple heuristic).
 
-    Heurystyka "waste tick" (możesz łatwo zmienić progi):
+    "Waste tick" heuristic (thresholds can be adjusted):
     - is_heating == True
-    - w żadnym pokoju nie ma osób
-    - w żadnym pokoju nie trwa spotkanie
-    - oraz wszystkie pokoje mają temperaturę >= min_temp_ok_c
+    - no people in any room
+    - no meeting in any room
+    - all rooms have temperature >= min_temp_ok_c
 
-    Każdy taki tick dodaje penalty_per_tick.
+    Each such tick adds penalty_per_tick.
     """
 
     def __init__(
@@ -26,7 +26,7 @@ class HeatingWasteMetric(BaseMetric):
     ):
         super().__init__(
             name="heating_waste",
-            description="Kara za grzanie, gdy nie ma osób/spotkań i temperatura jest wystarczająca",
+            description="Penalty for heating while there are no people/meetings and temperature is already sufficient",
         )
         self.min_temp_ok_c = min_temp_ok_c
         self.penalty_per_tick = penalty_per_tick

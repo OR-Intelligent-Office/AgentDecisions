@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-AgentDecisions: analiza decyzji agentów na podstawie stanu OrSimulator.
-
-Nie rozróżniamy "AI vs classic" — oceniamy efekt w środowisku.
-"""
 
 import asyncio
 import argparse
@@ -12,8 +7,9 @@ import sys
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Set
+import aiohttp
 
-# Dodaj katalog AgentDecisions do ścieżki
+# Add AgentDecisions directory to sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from evaluation.evaluator import EvaluationRunner, MetricSet
@@ -41,6 +37,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+
+
+async def ollama_model_is_healthy(model_name: str, ollama_url: str = "http://localhost:11434") -> bool:
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{ollama_url}/api/tags") as resp:
+                if resp.status != 200:
+                    return False
+                tags = await resp.json()
+                names = {m.get("name") for m in tags.get("models", [])}
+                if model_name not in names:
+                    return False
+
+            payload = {"model": model_name, "prompt": "ping", "stream": False}
+            async with session.post(f"{ollama_url}/api/generate", json=payload) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                return isinstance(data, dict) and "response" in data and not data.get("error")
+    except Exception as e:
+        logger.debug("Ollama health-check failed: %s", e)
+        return False
+
 
 async def run_auto(duration_seconds: int, simulator_url: str, collection_interval: float) -> None:
     runner = EvaluationRunner(simulator_url)
@@ -51,41 +72,10 @@ async def run_auto(duration_seconds: int, simulator_url: str, collection_interva
             collection_interval_seconds=collection_interval,
         )
 
-        metric_sets = [
-            MetricSet(
-                kind=SubjectKind.HEATING,
-                metrics=[
-                    HeatingComfortDuringMeetingsMetric(comfort_min_c=21.0, penalty_per_meeting=0.0, penalty_per_tick=1.0),
-                    HeatingWasteMetric(min_temp_ok_c=18.0, penalty_per_tick=0.5),
-                ],
-            ),
-            MetricSet(
-                kind=SubjectKind.PRINTER,
-                metrics=[
-                    PrinterAvailabilityMetric(penalty_per_tick=1.0),
-                    PrinterWasteMetric(penalty_per_tick=0.5),
-                    PrinterIllegalConsumptionMetric(penalty_per_tick=2.0),
-                ],
-            ),
-            MetricSet(
-                kind=SubjectKind.LIGHTS,
-                metrics=[
-                    LightsCoverageMetric(penalty_per_tick=1.0),
-                    LightsWasteMetric(penalty_per_tick=0.5),
-                ],
-            ),
-            MetricSet(
-                kind=SubjectKind.BLINDS,
-                metrics=[
-                    BlindsDaylightMetric(open_threshold=0.6, close_threshold=0.3, penalty_per_tick=0.5),
-                ],
-            ),
-        ]
-
         run = runner.evaluate(
             test_name="auto_active_agents",
             snapshots=snapshots,
-            metric_sets=metric_sets,
+            metric_sets=build_metric_sets(),
         )
 
         print_agent_results(run)
@@ -126,7 +116,7 @@ def build_metric_sets() -> list[MetricSet]:
 
 
 def print_metrics_and_criteria() -> None:
-    print("METRYKI (kara/min = penalty_avg_per_sim_minute):")
+    print("METRICS (penalty/min = penalty_avg_per_sim_minute):")
     print("- HeatingAgent: heating_comfort_during_meetings, heating_waste")
     print("- PrinterAgent: printer_availability, printer_waste, printer_illegal_consumption")
     print("- LightAgent: lights_coverage, lights_waste")
@@ -157,7 +147,7 @@ def aggregate_results_by_agent(run) -> dict[AgentKind, dict]:
                 "penalty_total": 0.0,
                 "penalty_avg_per_sim_minute": 0.0,
                 "subjects_count": 0,
-                "metrics": {},  # metric_name -> {total, avg, count}
+                "metrics": {},  # metric_name -> {total, avg}
             }
         
         agg = aggregated[agent_kind]
@@ -170,11 +160,9 @@ def aggregate_results_by_agent(run) -> dict[AgentKind, dict]:
                 agg["metrics"][metric.metric_name] = {
                     "penalty_total": 0.0,
                     "penalty_avg_per_sim_minute": 0.0,
-                    "count": 0,
                 }
             m = agg["metrics"][metric.metric_name]
             m["penalty_total"] += metric.penalty_total
-            m["count"] += 1
     
     # Calculate averages
     if sim_minutes > 0:
@@ -193,27 +181,32 @@ def print_agent_results(run, only_kinds: Optional[Set[AgentKind]] = None, header
     if only_kinds is not None:
         aggregated = {k: v for k, v in aggregated.items() if k in only_kinds}
 
-    print("\n" + "=" * 72)
-    print(header or "WYNIKI (aktywni agenci, agregowane per typ)")
-    print("=" * 72)
+    # Spacing between scenario blocks (no ASCII separators).
+    print()
+    print(header or "RESULTS")
     print(f"snapshots={run.snapshots_collected}  sim_min={run.summary.get('sim_duration_minutes', 0.0):.2f}")
-    
+
     if not aggregated:
-        print("Brak wyników do pokazania (agent nie został wykryty jako aktywny w oknie pomiaru).")
+        print("no active agents detected in the measurement window")
+        print()
         return
 
+    first = True
     for agent_kind in sorted(aggregated.keys(), key=lambda x: x.value):
+        if not first:
+            print()  # blank line between agent blocks
+        first = False
+
         agg = aggregated[agent_kind]
-        print("-" * 72)
         print(
             f"{agent_kind.value}: subjects={agg['subjects_count']}  "
             f"total={agg['penalty_total']:.2f}  avg/min={agg['penalty_avg_per_sim_minute']:.4f}"
         )
         for metric_name in sorted(agg["metrics"].keys()):
             m = agg["metrics"][metric_name]
-            print(
-                f"  - {metric_name}: total={m['penalty_total']:.2f}  avg/min={m['penalty_avg_per_sim_minute']:.4f}"
-            )
+            print(f"  {metric_name}: total={m['penalty_total']:.2f}  avg/min={m['penalty_avg_per_sim_minute']:.4f}")
+
+    print()
 
 
 @dataclass(frozen=True)
@@ -240,8 +233,28 @@ async def run_phase(
         if processes:
             logger.info(f"Starting processes: {[p.name for p in processes]}")
         mgr.start_all()
+        # Give processes a moment to spawn and fail fast if something is wrong.
+        await asyncio.sleep(0.5)
+        for p in processes:
+            if not p.is_running():
+                lp = p.log_path()
+                logger.warning(
+                    "Process '%s' is not running right after start (exit_code=%s). Log: %s",
+                    p.name,
+                    p.exit_code(),
+                    str(lp) if lp else "-",
+                )
         if warmup_seconds > 0:
             await asyncio.sleep(warmup_seconds)
+            for p in processes:
+                if not p.is_running():
+                    lp = p.log_path()
+                    logger.warning(
+                        "Process '%s' is not running after warmup (exit_code=%s). Log: %s",
+                        p.name,
+                        p.exit_code(),
+                        str(lp) if lp else "-",
+                    )
 
         logger.info(f"Collecting snapshots for {duration_seconds}s...")
         snapshots = await runner.collect_snapshots(
@@ -309,28 +322,28 @@ def build_processes(simulator_url: str, show_logs: bool) -> list[ManagedProcess]
     else:
         logger.warning(f"Skipping LightAgent: {light_agent_path} not found")
     
-    blinds_agent_path = root / "WindowBlindsAgent" / "simple_agent.py"
-    if blinds_agent_path.exists():
+    blinds_agent_candidates = [
+        root / "WindowBlindsAgent" / "blinds_agent.py",
+        root / "WindowBlindsAgent" / "simple_agent.py",
+    ]
+    blinds_agent_entry = next((p for p in blinds_agent_candidates if p.exists()), None)
+    if blinds_agent_entry:
         classic.append(
             ManagedProcess(
                 name="WindowBlindsAgent",
-                cmd=[py, "simple_agent.py", simulator_url],
-                cwd=root / "WindowBlindsAgent",
+                cmd=[py, blinds_agent_entry.name, simulator_url],
+                cwd=blinds_agent_entry.parent,
                 env=env,
                 show_logs=show_logs,
             )
         )
     else:
-        logger.warning(f"Skipping WindowBlindsAgent: {blinds_agent_path} not found")
+        logger.warning("Skipping WindowBlindsAgent: no entrypoint found (blinds_agent.py/simple_agent.py)")
 
     return classic
 
 
 def build_scenarios(simulator_url: str, show_logs: bool, warmup_seconds: float) -> list[Scenario]:
-    """
-    Scenariusze uruchamiane sekwencyjnie: jeden agent na raz, pomiar, stop.
-    Pomija agenta, jeśli nie ma pliku/entrypointa.
-    """
     root = project_root()
     env = default_env()
     py = python_cmd()
@@ -418,16 +431,41 @@ def build_scenarios(simulator_url: str, show_logs: bool, warmup_seconds: float) 
         )
 
     # Blinds classic
-    blinds_py = root / "WindowBlindsAgent" / "simple_agent.py"
-    if blinds_py.exists():
+    blinds_candidates = [
+        root / "WindowBlindsAgent" / "blinds_agent.py",
+        root / "WindowBlindsAgent" / "simple_agent.py",
+    ]
+    blinds_py = next((p for p in blinds_candidates if p.exists()), None)
+    if blinds_py:
         scenarios.append(
             Scenario(
                 name="WindowBlindsAgent",
                 processes=[
                     ManagedProcess(
                         name="WindowBlindsAgent",
-                        cmd=[py, "simple_agent.py", simulator_url],
-                        cwd=root / "WindowBlindsAgent",
+                        cmd=[py, blinds_py.name, simulator_url],
+                        cwd=blinds_py.parent,
+                        env=env,
+                        show_logs=show_logs,
+                    )
+                ],
+                kinds={AgentKind.BLINDS},
+                warmup_seconds=warmup_seconds,
+            )
+        )
+
+    # Blinds AI - WindowBlindsAgentAI
+    blinds_ai_py = root / "WindowBlindsAgentAI" / "blinds_agent_ai.py"
+    if blinds_ai_py.exists():
+        scenarios.append(
+            Scenario(
+                name="WindowBlindsAgentAI",
+                processes=[
+                    ManagedProcess(
+                        name="WindowBlindsAgentAI",
+                        # Run with the same Python as AgentDecisions (venv interpreter)
+                        cmd=[py, "blinds_agent_ai.py", simulator_url, "--model", DEFAULT_OLLAMA_MODEL],
+                        cwd=root / "WindowBlindsAgentAI",
                         env=env,
                         show_logs=show_logs,
                     )
@@ -449,8 +487,20 @@ async def run_sequence(
 ) -> None:
     scenarios = build_scenarios(simulator_url, show_logs=show_logs, warmup_seconds=warmup_seconds)
     if not scenarios:
-        print("Brak scenariuszy do uruchomienia (brak agentów w repo).")
+        print("No scenarios to run (no agents found in the repo).")
         return
+
+    # If Ollama/model is not healthy, skip AI scenarios
+    ai_names = {"HeatingAgentAI", "WindowBlindsAgentAI"}
+    if any(s.name in ai_names for s in scenarios):
+        ok = await ollama_model_is_healthy(DEFAULT_OLLAMA_MODEL)
+        if not ok:
+            logger.warning(
+                "Ollama/model '%s' is not healthy (EOF/timeout/etc). Skipping AI scenarios: %s",
+                DEFAULT_OLLAMA_MODEL,
+                ", ".join(sorted(ai_names)),
+            )
+            scenarios = [s for s in scenarios if s.name not in ai_names]
 
     for s in scenarios:
         # Ensure HeatingAgentAI port is free
@@ -464,56 +514,56 @@ async def run_sequence(
             warmup_seconds=s.warmup_seconds,
             processes=s.processes,
         )
-        print_agent_results(run, only_kinds=s.kinds, header=f"WYNIKI: {s.name}")
+        print_agent_results(run, only_kinds=s.kinds, header=f"RESULTS: {s.name}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Auto-analiza aktywnych agentów (heating/printers/lights/blinds) jako średnia kara w czasie"
+        description="Auto-evaluate active agents (heating/printers/lights/blinds) using average penalty over time"
     )
     parser.add_argument(
         "--duration",
         type=int,
         default=300,
-        help="Czas trwania testu w sekundach (domyślnie: 300)",
+        help="Test duration in seconds (default: 300)",
     )
     parser.add_argument(
         "--simulator-url",
         type=str,
         default="http://localhost:8080",
-        help="URL symulatora (domyślnie: http://localhost:8080)",
+        help="Simulator base URL (default: http://localhost:8080)",
     )
     parser.add_argument(
         "--collection-interval",
         type=float,
         default=2.0,
-        help="Interwał zbierania danych w sekundach (domyślnie: 2.0)",
+        help="Snapshot collection interval in seconds (default: 2.0)",
     )
     parser.add_argument(
         "--start-agents",
         action="store_true",
-        help="Spróbuj uruchomić lokalne agenty (jeśli pliki istnieją).",
+        help="Try to start local agents (only if their entrypoints exist).",
     )
     parser.add_argument(
         "--sequence",
         action="store_true",
-        help="Uruchom sekwencyjnie: jeden agent -> pomiar -> stop -> następny (auto-skip gdy brak).",
+        help="Run sequentially: one agent -> measure -> stop -> next (auto-skip if missing).",
     )
     parser.add_argument(
         "--warmup",
         type=float,
         default=5.0,
-        help="Czas rozgrzewki po starcie procesów przed pomiarem (sekundy).",
+        help="Warmup time after starting processes before measurement (seconds).",
     )
     parser.add_argument(
         "--show-agent-logs",
         action="store_true",
-        help="Jeśli ustawione, logi agentów lecą do konsoli (domyślnie wyciszone).",
+        help="If set, stream agent logs to the console (default: quiet).",
     )
     parser.add_argument(
         "--describe-metrics",
         action="store_true",
-        help="Wypisz listę metryk i wyjdź.",
+        help="Print the list of metrics and exit.",
     )
 
     args = parser.parse_args()

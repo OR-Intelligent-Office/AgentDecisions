@@ -7,8 +7,8 @@ from models.data_models import EnvironmentSnapshot, Subject, SubjectKind
 
 def detect_active_subjects(snapshots: List[EnvironmentSnapshot]) -> List[Subject]:
     """
-    Wykrywa "odpalone" agenty na podstawie zmian w stanie urządzeń.
-    To jest celowo heurystyczne (brak bezpośredniej telemetrii procesów).
+    Detects "active" controllers based on device state changes.
+    This is intentionally heuristic (there is no direct process telemetry).
     """
     if not snapshots:
         return []

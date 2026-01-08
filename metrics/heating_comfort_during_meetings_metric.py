@@ -7,11 +7,11 @@ from metrics.base_metric import BaseMetric
 
 class HeatingComfortDuringMeetingsMetric(BaseMetric):
     """
-    Ocena komfortu: podczas spotkań temperatura w pokoju powinna być >= comfort_min_c.
+    Comfort metric: during meetings, room temperature should be >= comfort_min_c.
 
-    Punktacja (v2):
-    - kara per tick (snapshot) w trakcie spotkania, gdy temperatura < comfort_min_c
-    - wynik raportowany jako penalty_total oraz penalty_avg_per_sim_minute
+    Scoring (v2):
+    - per-tick penalty (snapshot) during a meeting when temperature < comfort_min_c
+    - reported as penalty_total and penalty_avg_per_sim_minute
     """
 
     def __init__(
@@ -22,7 +22,7 @@ class HeatingComfortDuringMeetingsMetric(BaseMetric):
     ):
         super().__init__(
             name="heating_comfort_during_meetings",
-            description="Sprawdza czy temperatura podczas spotkań jest >= zadany próg komfortu",
+            description="Penalty when temperature during meetings is below the comfort threshold",
         )
         self.comfort_min_c = comfort_min_c
         self.penalty_per_meeting = penalty_per_meeting

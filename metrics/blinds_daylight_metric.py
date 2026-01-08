@@ -9,9 +9,9 @@ from metrics.base_metric import BaseMetric
 
 class BlindsDaylightMetric(BaseMetric):
     """
-    Prosta metryka "sensowne rolety" na podstawie daylightIntensity:
-    - jeśli daylightIntensity >= open_threshold i w pokoju są osoby lub spotkanie -> rolety powinny być OPEN
-    - jeśli daylightIntensity <= close_threshold i brak osób i brak spotkania -> rolety powinny być CLOSED
+    Simple "sensible blinds" metric based on daylightIntensity:
+    - if daylightIntensity >= open_threshold and the room is active (people or meeting) -> blinds should be OPEN
+    - if daylightIntensity <= close_threshold and the room is inactive (no people and no meeting) -> blinds should be CLOSED
     """
 
     def __init__(
@@ -22,7 +22,7 @@ class BlindsDaylightMetric(BaseMetric):
     ):
         super().__init__(
             name="blinds_daylight",
-            description="Kara za rolety niezgodne z prostą heurystyką na podstawie daylightIntensity i aktywności",
+            description="Penalty when blinds state conflicts with a simple daylight/activity heuristic",
         )
         self.open_threshold = open_threshold
         self.close_threshold = close_threshold
