@@ -8,6 +8,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Set
 import aiohttp
+import re
+import time
+from urllib.parse import urlparse
 
 # Add AgentDecisions directory to sys.path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -38,6 +41,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+DEFAULT_SIMULATOR_START_TIME = "2026-01-01T08:00:00"
+
+
+def _parse_simulator_port(simulator_url: str) -> Optional[int]:
+    try:
+        u = urlparse(simulator_url)
+        return u.port or (443 if u.scheme == "https" else 80)
+    except Exception:
+        return None
+
+
+def parse_seeds(seeds_arg: str) -> list[int]:
+    parts = [p for p in re.split(r"[,\s]+", (seeds_arg or "").strip()) if p]
+    out: list[int] = []
+    for p in parts:
+        try:
+            out.append(int(p))
+        except ValueError:
+            raise SystemExit(f"Invalid seed value: '{p}' (expected integer)")
+    if not out:
+        raise SystemExit("No seeds provided (use e.g. --seeds 1 or --seeds '1,2,3').")
+    return out
 
 
 async def ollama_model_is_healthy(model_name: str, ollama_url: str = "http://localhost:11434") -> bool:
@@ -61,6 +86,26 @@ async def ollama_model_is_healthy(model_name: str, ollama_url: str = "http://loc
     except Exception as e:
         logger.debug("Ollama health-check failed: %s", e)
         return False
+
+
+async def wait_for_simulator_ready(
+    simulator_url: str,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.5,
+) -> bool:
+    """Wait until OrSimulator responds to /api/environment/state."""
+    deadline = time.time() + timeout_seconds
+    timeout = aiohttp.ClientTimeout(total=3)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        while time.time() < deadline:
+            try:
+                async with session.get(f"{simulator_url}/api/environment/state") as resp:
+                    if resp.status == 200:
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(poll_interval_seconds)
+    return False
 
 
 async def run_auto(duration_seconds: int, simulator_url: str, collection_interval: float) -> None:
@@ -230,12 +275,41 @@ async def run_phase(
 
     runner = EvaluationRunner(simulator_url)
     try:
-        if processes:
-            logger.info(f"Starting processes: {[p.name for p in processes]}")
-        mgr.start_all()
+        # If OrSimulator is included, start it first and wait until it's ready.
+        sim_proc = next((p for p in processes if p.name == "OrSimulator"), None)
+        other_procs = [p for p in processes if p.name != "OrSimulator"]
+
+        if sim_proc:
+            logger.info("Starting OrSimulator...")
+            sim_proc.start()
+            await asyncio.sleep(0.5)
+            if not sim_proc.is_running():
+                lp = sim_proc.log_path()
+                logger.warning(
+                    "Process '%s' is not running right after start (exit_code=%s). Log: %s",
+                    sim_proc.name,
+                    sim_proc.exit_code(),
+                    str(lp) if lp else "-",
+                )
+            else:
+                ok = await wait_for_simulator_ready(simulator_url)
+                if not ok:
+                    lp = sim_proc.log_path()
+                    logger.warning(
+                        "OrSimulator did not become ready at %s within timeout. Log: %s",
+                        simulator_url,
+                        str(lp) if lp else "-",
+                    )
+                else:
+                    logger.info("Started OrSimulator.")
+
+        for p in other_procs:
+            logger.info("Starting agent: %s", p.name)
+            p.start()
+
         # Give processes a moment to spawn and fail fast if something is wrong.
         await asyncio.sleep(0.5)
-        for p in processes:
+        for p in other_procs:
             if not p.is_running():
                 lp = p.log_path()
                 logger.warning(
@@ -246,7 +320,7 @@ async def run_phase(
                 )
         if warmup_seconds > 0:
             await asyncio.sleep(warmup_seconds)
-            for p in processes:
+            for p in other_procs:
                 if not p.is_running():
                     lp = p.log_path()
                     logger.warning(
@@ -269,6 +343,11 @@ async def run_phase(
         return run
     finally:
         mgr.stop_all()
+        if processes:
+            agent_names = [p.name for p in other_procs] or ["(no agents)"]
+            logger.info("Stopped agent(s): %s", ", ".join(agent_names))
+            if sim_proc:
+                logger.info("Stopped OrSimulator.")
         await runner.close()
 
 
@@ -499,13 +578,49 @@ def build_scenarios(simulator_url: str, show_logs: bool, warmup_seconds: float) 
     return scenarios
 
 
+def build_orsimulator_process(
+    seed: int,
+    start_time: str,
+    show_logs: bool,
+) -> Optional[ManagedProcess]:
+    """Create a ManagedProcess that starts OrSimulator with deterministic seed/time."""
+    root = project_root()
+    gradlew = root / "OrSimulator" / "gradlew"
+    if not gradlew.exists():
+        logger.warning("Skipping OrSimulator startup: %s not found", str(gradlew))
+        return None
+
+    env = default_env()
+    env["SIMULATOR_RANDOM_SEED"] = str(seed)
+    env["SIMULATOR_START_TIME"] = start_time
+
+    return ManagedProcess(
+        name="OrSimulator",
+        cmd=["./gradlew", "run"],
+        cwd=root / "OrSimulator",
+        env=env,
+        show_logs=show_logs,
+    )
+
+
 async def run_sequence(
     simulator_url: str,
     duration_seconds: int,
     collection_interval: float,
     warmup_seconds: float,
     show_logs: bool,
+    seeds: list[int],
+    simulator_start_time: str,
 ) -> None:
+    port = _parse_simulator_port(simulator_url)
+    if port != 8080:
+        logger.warning(
+            "OrSimulator is configured to run on port 8080, but simulator_url=%s (port=%s). "
+            "Either use --simulator-url http://localhost:8080 or adjust OrSimulator.",
+            simulator_url,
+            port,
+        )
+
     scenarios = build_scenarios(simulator_url, show_logs=show_logs, warmup_seconds=warmup_seconds)
     if not scenarios:
         print("No scenarios to run (no agents found in the repo).")
@@ -523,19 +638,30 @@ async def run_sequence(
             )
             scenarios = [s for s in scenarios if s.name not in ai_names]
 
-    for s in scenarios:
-        # Ensure HeatingAgentAI port is free
-        if s.name == "HeatingAgentAI":
-            kill_process_on_port(8061)
+    for seed in seeds:
+        for s in scenarios:
+            # Ensure OrSimulator port is free (fresh instance per run)
+            kill_process_on_port(8080)
 
-        run = await run_phase(
-            simulator_url=simulator_url,
-            duration_seconds=duration_seconds,
-            collection_interval=collection_interval,
-            warmup_seconds=s.warmup_seconds,
-            processes=s.processes,
-        )
-        print_agent_results(run, only_kinds=s.kinds, header=f"RESULTS: {s.name}")
+            # Ensure HeatingAgentAI port is free
+            if s.name == "HeatingAgentAI":
+                kill_process_on_port(8061)
+
+            orsim = build_orsimulator_process(seed=seed, start_time=simulator_start_time, show_logs=show_logs)
+            procs = ([orsim] if orsim else []) + list(s.processes)
+
+            run = await run_phase(
+                simulator_url=simulator_url,
+                duration_seconds=duration_seconds,
+                collection_interval=collection_interval,
+                warmup_seconds=s.warmup_seconds,
+                processes=procs,
+            )
+            print_agent_results(
+                run,
+                only_kinds=s.kinds,
+                header=f"RESULTS: {s.name}  (seed={seed}, start={simulator_start_time})",
+            )
 
 
 def main():
@@ -563,12 +689,24 @@ def main():
     parser.add_argument(
         "--start-agents",
         action="store_true",
-        help="Try to start local agents (only if their entrypoints exist).",
+        help="Alias for --sequence (kept for backward compatibility).",
     )
     parser.add_argument(
         "--sequence",
         action="store_true",
         help="Run sequentially: one agent -> measure -> stop -> next (auto-skip if missing).",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=str,
+        default="1",
+        help="Comma/space-separated simulator seeds (default: 1).",
+    )
+    parser.add_argument(
+        "--simulator-start-time",
+        type=str,
+        default=DEFAULT_SIMULATOR_START_TIME,
+        help=f"OrSimulator start time in ISO format (default: {DEFAULT_SIMULATOR_START_TIME}).",
     )
     parser.add_argument(
         "--warmup",
@@ -593,7 +731,8 @@ def main():
         print_metrics_and_criteria()
         return
 
-    if args.sequence:
+    if args.sequence or args.start_agents:
+        seeds = parse_seeds(args.seeds)
         asyncio.run(
             run_sequence(
                 simulator_url=args.simulator_url,
@@ -601,22 +740,10 @@ def main():
                 collection_interval=args.collection_interval,
                 warmup_seconds=args.warmup,
                 show_logs=args.show_agent_logs,
+                seeds=seeds,
+                simulator_start_time=args.simulator_start_time,
             )
         )
-        return
-
-    if args.start_agents:
-        async def _run():
-            run = await run_phase(
-                simulator_url=args.simulator_url,
-                duration_seconds=args.duration,
-                collection_interval=args.collection_interval,
-                warmup_seconds=args.warmup,
-                processes=build_processes(args.simulator_url, args.show_agent_logs),
-            )
-            print_agent_results(run)
-
-        asyncio.run(_run())
         return
 
     # Single-phase (no process orchestration)

@@ -173,13 +173,21 @@ def kill_process_on_port(port: int) -> None:
     try:
         result = subprocess.run(
             ["lsof", "-ti", f":{port}"],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             timeout=2.0,
         )
         if result.returncode == 0 and result.stdout.strip():
-            pid = result.stdout.strip()
-            subprocess.run(["kill", pid], timeout=2.0)
+            pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+            for pid in pids:
+                # Silence kill output; ignore failures (process may have exited already).
+                subprocess.run(
+                    ["kill", pid],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2.0,
+                )
     except Exception:
         pass  # Ignore errors (port might be free, lsof might not exist, etc.)
 
