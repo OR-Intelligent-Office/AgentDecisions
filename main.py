@@ -430,6 +430,27 @@ def build_scenarios(simulator_url: str, show_logs: bool, warmup_seconds: float) 
             )
         )
 
+    # Light AI - LightAgentAI
+    light_ai_py = root / "LightAgentAI" / "light_agent_ai.py"
+    if light_ai_py.exists():
+        scenarios.append(
+            Scenario(
+                name="LightAgentAI",
+                processes=[
+                    ManagedProcess(
+                        name="LightAgentAI",
+                        # Run with the same Python as AgentDecisions (venv interpreter)
+                        cmd=[py, "light_agent_ai.py", simulator_url, "--model", DEFAULT_OLLAMA_MODEL],
+                        cwd=root / "LightAgentAI",
+                        env=env,
+                        show_logs=show_logs,
+                    )
+                ],
+                kinds={AgentKind.LIGHT},
+                warmup_seconds=warmup_seconds,
+            )
+        )
+
     # Blinds classic
     blinds_candidates = [
         root / "WindowBlindsAgent" / "blinds_agent.py",
@@ -491,7 +512,7 @@ async def run_sequence(
         return
 
     # If Ollama/model is not healthy, skip AI scenarios
-    ai_names = {"HeatingAgentAI", "WindowBlindsAgentAI"}
+    ai_names = {"HeatingAgentAI", "LightAgentAI", "WindowBlindsAgentAI"}
     if any(s.name in ai_names for s in scenarios):
         ok = await ollama_model_is_healthy(DEFAULT_OLLAMA_MODEL)
         if not ok:
