@@ -9,23 +9,23 @@ from metrics.base_metric import BaseMetric
 
 class BlindsDaylightMetric(BaseMetric):
     """
-    Simple "sensible blinds" metric based on daylightIntensity:
-    - if daylightIntensity >= open_threshold and the room is active (people or meeting) -> blinds should be OPEN
-    - if daylightIntensity <= close_threshold and the room is inactive (no people and no meeting) -> blinds should be CLOSED
+    Simple "sensible blinds" metric based on external light (lux):
+    - if external_light_lux >= open_threshold_lux and the room is active (people or meeting) -> blinds should be OPEN
+    - if external_light_lux <= close_threshold_lux and the room is inactive (no people and no meeting) -> blinds should be CLOSED
     """
 
     def __init__(
         self,
-        open_threshold: float = 0.6,
-        close_threshold: float = 0.3,
-        penalty_per_tick: float = 0.5,
+        open_threshold_lux: float = 6000.0,
+        close_threshold_lux: float = 3000.0,
+        penalty_per_tick: float = 1.0,
     ):
         super().__init__(
             name="blinds_daylight",
             description="Penalty when blinds state conflicts with a simple daylight/activity heuristic",
         )
-        self.open_threshold = open_threshold
-        self.close_threshold = close_threshold
+        self.open_threshold_lux = open_threshold_lux
+        self.close_threshold_lux = close_threshold_lux
         self.penalty_per_tick = penalty_per_tick
 
     def calculate(self, snapshots: List[EnvironmentSnapshot], subject: Subject) -> MetricScore:
@@ -46,11 +46,11 @@ class BlindsDaylightMetric(BaseMetric):
             meeting_now = any(m.start_time <= s.simulation_time <= m.end_time for m in room.meetings)
             active = meeting_now or room.people_count > 0
 
-            if s.daylight_intensity >= self.open_threshold and active:
+            if s.external_light_lux >= self.open_threshold_lux and active:
                 if room.blinds.state != "OPEN":
                     ticks += 1
                     total_penalty += self.penalty_per_tick
-            if s.daylight_intensity <= self.close_threshold and (not active):
+            if s.external_light_lux <= self.close_threshold_lux and (not active):
                 if room.blinds.state != "CLOSED":
                     ticks += 1
                     total_penalty += self.penalty_per_tick
@@ -63,8 +63,8 @@ class BlindsDaylightMetric(BaseMetric):
             penalty_total=total_penalty,
             penalty_avg_per_sim_minute=avg,
             details={
-                "open_threshold": self.open_threshold,
-                "close_threshold": self.close_threshold,
+                "open_threshold_lux": self.open_threshold_lux,
+                "close_threshold_lux": self.close_threshold_lux,
                 "violation_ticks": ticks,
                 "sim_duration_minutes": dur_min,
             },

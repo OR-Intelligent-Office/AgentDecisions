@@ -22,7 +22,7 @@ class HeatingWasteMetric(BaseMetric):
     def __init__(
         self,
         min_temp_ok_c: float = 18.0,
-        penalty_per_tick: float = 0.5,
+        penalty_per_tick: float = 1.0,
     ):
         super().__init__(
             name="heating_waste",

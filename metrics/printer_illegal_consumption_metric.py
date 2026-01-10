@@ -13,7 +13,7 @@ class PrinterIllegalConsumptionMetric(BaseMetric):
     This catches classes of bugs where resources are consumed while the device is OFF.
     """
 
-    def __init__(self, penalty_per_tick: float = 2.0):
+    def __init__(self, penalty_per_tick: float = 1.0):
         super().__init__(
             name="printer_illegal_consumption",
             description="Penalty when toner/paper decreases while the printer is not ON",
@@ -29,6 +29,7 @@ class PrinterIllegalConsumptionMetric(BaseMetric):
 
         total_penalty = 0.0
         ticks = 0
+        examples: list[dict] = []
 
         prev_levels: Optional[Tuple[int, int]] = None
         prev_state: Optional[str] = None
@@ -49,6 +50,18 @@ class PrinterIllegalConsumptionMetric(BaseMetric):
                 if (toner_down or paper_down) and p.state != "ON":
                     ticks += 1
                     total_penalty += self.penalty_per_tick
+                    if len(examples) < 5:
+                        examples.append(
+                            {
+                                "timestamp": s.simulation_time.isoformat(),
+                                "room": room.room_name,
+                                "printer_state": p.state,
+                                "prev_toner": prev_levels[0],
+                                "prev_paper": prev_levels[1],
+                                "toner": cur_levels[0],
+                                "paper": cur_levels[1],
+                            }
+                        )
 
             prev_levels = cur_levels
             prev_state = p.state
@@ -60,7 +73,7 @@ class PrinterIllegalConsumptionMetric(BaseMetric):
             subject=subject,
             penalty_total=total_penalty,
             penalty_avg_per_sim_minute=avg,
-            details={"illegal_ticks": ticks, "sim_duration_minutes": dur_min},
+            details={"illegal_ticks": ticks, "examples": examples, "sim_duration_minutes": dur_min},
         )
 
 

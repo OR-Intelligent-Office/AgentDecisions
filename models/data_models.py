@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from enum import Enum
@@ -75,7 +75,9 @@ class RoomState:
     people_count: int
     meetings: List[Meeting]
     temperature_c: float
-    timestamp: datetime
+    illumination_lux: float = 0.0
+    is_heating: bool = False
+    timestamp: datetime = field(default_factory=datetime.now)
 
 
 @dataclass
@@ -84,9 +86,13 @@ class EnvironmentSnapshot:
     rooms: List[RoomState]
     external_temperature_c: float
     power_outage: bool
-    is_heating: bool
-    daylight_intensity: float
-    timestamp: datetime
+    # Global/derived values (for backwards-compatible metrics):
+    # - external_light_lux comes from OrSimulator's externalLightLux (0..10000)
+    # - daylight_intensity is a normalized proxy in range 0..1 (external_light_lux/10000)
+    external_light_lux: float = 0.0
+    is_heating: bool = False
+    daylight_intensity: float = 0.0
+    timestamp: datetime = field(default_factory=datetime.now)
 
 
 @dataclass

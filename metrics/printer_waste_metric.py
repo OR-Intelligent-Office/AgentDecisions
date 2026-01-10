@@ -12,7 +12,7 @@ class PrinterWasteMetric(BaseMetric):
     Penalty when the printer is ON despite no people and no ongoing meeting.
     """
 
-    def __init__(self, penalty_per_tick: float = 0.5):
+    def __init__(self, penalty_per_tick: float = 1.0):
         super().__init__(
             name="printer_waste",
             description="Penalty when printer is ON despite no people and no meetings",
@@ -28,6 +28,7 @@ class PrinterWasteMetric(BaseMetric):
 
         total_penalty = 0.0
         ticks = 0
+        examples: list[dict] = []
 
         for s in snapshots:
             room = next(
@@ -41,6 +42,16 @@ class PrinterWasteMetric(BaseMetric):
             if room.people_count == 0 and not meeting_now and room.printer.state == "ON":
                 ticks += 1
                 total_penalty += self.penalty_per_tick
+                if len(examples) < 5:
+                    examples.append(
+                        {
+                            "timestamp": s.simulation_time.isoformat(),
+                            "room": room.room_name,
+                            "people_count": room.people_count,
+                            "meeting_now": meeting_now,
+                            "printer_state": room.printer.state,
+                        }
+                    )
 
         dur_min = sim_duration_minutes(snapshots)
         avg = (total_penalty / dur_min) if dur_min > 0 else total_penalty
@@ -49,7 +60,7 @@ class PrinterWasteMetric(BaseMetric):
             subject=subject,
             penalty_total=total_penalty,
             penalty_avg_per_sim_minute=avg,
-            details={"waste_ticks": ticks, "sim_duration_minutes": dur_min},
+            details={"waste_ticks": ticks, "examples": examples, "sim_duration_minutes": dur_min},
         )
 
 

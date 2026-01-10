@@ -63,7 +63,7 @@ Wynik każdej metryki:
     - w żadnym pokoju nie ma osób,
     - w żadnym pokoju nie trwa spotkanie,
     - wszystkie pokoje mają temperaturę **>= 18°C**.
-  - **Punktowanie**: **+0.5** za tick naruszenia.
+  - **Punktowanie**: **+1.0** za tick naruszenia.
 
 #### PrinterAgent (per drukarka)
 
@@ -75,30 +75,30 @@ Wynik każdej metryki:
 - **printer_waste**
   - **Cel**: wykrywanie “marnowania” pracy drukarki.
   - **Kara**: za każdy tick, gdy **brak osób** i **nie trwa spotkanie**, a drukarka jest **ON**.
-  - **Punktowanie**: **+0.5** za tick naruszenia.
+  - **Punktowanie**: **+1.0** za tick naruszenia.
 
 - **printer_illegal_consumption**
   - **Cel**: wykrywanie nielegalnego zużycia zasobów.
   - **Kara**: za każdy tick, gdy (między kolejnymi snapshotami) **toner lub papier spada**, mimo że drukarka **nie jest ON**.
-  - **Punktowanie**: **+2.0** za tick naruszenia.
+  - **Punktowanie**: **+1.0** za tick naruszenia.
 
 #### LightAgent (per pokój)
 
 - **lights_coverage**
   - **Cel**: zapewnienie światła podczas aktywności.
-  - **Kara**: za każdy tick, gdy w pokoju jest aktywność (**osoby > 0 lub trwa spotkanie**), a wszystkie światła w pokoju są **OFF**.
+  - **Kara**: za każdy tick, gdy w pokoju jest aktywność (**osoby > 0 lub trwa spotkanie**), a naświetlenie pokoju (`illumination`, lux) jest **< 300 lux**.
   - **Punktowanie**: **+1.0** za tick naruszenia.
 
 - **lights_waste**
   - **Cel**: wykrywanie marnowania energii na oświetlenie.
   - **Kara**: za każdy tick, gdy **brak osób** i **nie trwa spotkanie**, a **jakiekolwiek** światło w pokoju jest **ON**.
-  - **Punktowanie**: **+0.5** za tick naruszenia.
+  - **Punktowanie**: **+1.0** za tick naruszenia.
 
 #### WindowBlindsAgent (per pokój)
 
 - **blinds_daylight**
   - **Cel**: sensowne ustawienie rolet w zależności od światła dziennego i aktywności.
   - **Heurystyka**:
-    - jeśli **daylight_intensity >= 0.6** i pokój jest aktywny (**osoby > 0 lub trwa spotkanie**) → rolety powinny być **OPEN**
-    - jeśli **daylight_intensity <= 0.3** i pokój jest nieaktywny (**brak osób i brak spotkania**) → rolety powinny być **CLOSED**
-  - **Kara**: **+0.5** za każdy tick naruszenia.
+    - jeśli **externalLightLux >= 6000** i pokój jest aktywny (**osoby > 0 lub trwa spotkanie**) → rolety powinny być **OPEN**
+    - jeśli **externalLightLux <= 3000** i pokój jest nieaktywny (**brak osób i brak spotkania**) → rolety powinny być **CLOSED**
+  - **Kara**: **+1.0** za każdy tick naruszenia.

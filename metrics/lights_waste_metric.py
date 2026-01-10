@@ -12,7 +12,7 @@ class LightsWasteMetric(BaseMetric):
     Penalty when there are no people and no ongoing meeting in the room, but any light is ON.
     """
 
-    def __init__(self, penalty_per_tick: float = 0.5):
+    def __init__(self, penalty_per_tick: float = 1.0):
         super().__init__(
             name="lights_waste",
             description="Penalty when lights are ON despite no people and no meetings",
@@ -28,6 +28,7 @@ class LightsWasteMetric(BaseMetric):
 
         total_penalty = 0.0
         ticks = 0
+        examples: list[dict] = []
 
         for s in snapshots:
             room = next((r for r in s.rooms if r.room_id == subject.room_id), None)
@@ -40,6 +41,18 @@ class LightsWasteMetric(BaseMetric):
                 if any_on:
                     ticks += 1
                     total_penalty += self.penalty_per_tick
+                    if len(examples) < 5:
+                        examples.append(
+                            {
+                                "room": room.room_name,
+                                "room_id": room.room_id,
+                                "timestamp": s.simulation_time.isoformat(),
+                                "people_count": room.people_count,
+                                "meeting_now": meeting_now,
+                                "lights_on": [l.light_id for l in room.lights if l.state == "ON"],
+                                "illumination_lux": room.illumination_lux,
+                            }
+                        )
 
         dur_min = sim_duration_minutes(snapshots)
         avg = (total_penalty / dur_min) if dur_min > 0 else total_penalty
@@ -48,7 +61,7 @@ class LightsWasteMetric(BaseMetric):
             subject=subject,
             penalty_total=total_penalty,
             penalty_avg_per_sim_minute=avg,
-            details={"waste_ticks": ticks, "sim_duration_minutes": dur_min},
+            details={"waste_ticks": ticks, "examples": examples, "sim_duration_minutes": dur_min},
         )
 
 

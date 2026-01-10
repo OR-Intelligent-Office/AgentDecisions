@@ -133,28 +133,30 @@ def build_metric_sets() -> list[MetricSet]:
             kind=SubjectKind.HEATING,
             metrics=[
                 HeatingComfortDuringMeetingsMetric(comfort_min_c=21.0, penalty_per_meeting=0.0, penalty_per_tick=1.0),
-                HeatingWasteMetric(min_temp_ok_c=18.0, penalty_per_tick=0.5),
+                HeatingWasteMetric(min_temp_ok_c=18.0, penalty_per_tick=1.0),
             ],
         ),
         MetricSet(
             kind=SubjectKind.PRINTER,
             metrics=[
                 PrinterAvailabilityMetric(penalty_per_tick=1.0),
-                PrinterWasteMetric(penalty_per_tick=0.5),
-                PrinterIllegalConsumptionMetric(penalty_per_tick=2.0),
+                PrinterWasteMetric(penalty_per_tick=1.0),
+                PrinterIllegalConsumptionMetric(penalty_per_tick=1.0),
             ],
         ),
         MetricSet(
             kind=SubjectKind.LIGHTS,
             metrics=[
-                LightsCoverageMetric(penalty_per_tick=1.0),
-                LightsWasteMetric(penalty_per_tick=0.5),
+                # Coverage is lux-based now (do not penalize if daylight already provides enough light).
+                LightsCoverageMetric(min_illumination_lux=300.0, penalty_per_tick=1.0),
+                LightsWasteMetric(penalty_per_tick=1.0),
             ],
         ),
         MetricSet(
             kind=SubjectKind.BLINDS,
             metrics=[
-                BlindsDaylightMetric(open_threshold=0.6, close_threshold=0.3, penalty_per_tick=0.5),
+                # OrSimulator uses externalLightLux in range 0..10000.
+                BlindsDaylightMetric(open_threshold_lux=6000.0, close_threshold_lux=3000.0, penalty_per_tick=1.0),
             ],
         ),
     ]
@@ -219,8 +221,71 @@ def aggregate_results_by_agent(run) -> dict[AgentKind, dict]:
     return aggregated
 
 
+def is_ai_scenario_name(name: str) -> bool:
+    # Keep it simple: our AI scenarios are named like "HeatingAgentAI", "LightAgentAI", etc.
+    return name.strip().endswith("AI")
+
+
+def _subject_to_agent_kind(subject_kind: SubjectKind) -> AgentKind:
+    return _subject_kind_to_agent_kind(subject_kind)
+
+
+def _format_subject_label(sr) -> str:
+    """
+    Human-readable label for a single SubjectResult (typically per room / per printer).
+    """
+    s = sr.subject
+    # Prefer room name when available (lights/blinds/printers are usually per-room).
+    if s.room_name:
+        return f"{s.room_name} ({s.subject_id})"
+    return s.subject_id
+
+
+def _print_metric_triggers(details: dict, indent: str = "        ") -> None:
+    """
+    Print a few example events explaining *why* points were added.
+    """
+    if not isinstance(details, dict):
+        return
+
+    # Heating comfort stores nested 'violations' per meeting.
+    violations = details.get("violations")
+    if isinstance(violations, list) and violations:
+        shown = 0
+        for block in violations:
+            if shown >= 3:
+                break
+            meeting = (block or {}).get("meeting", {})
+            vs = (block or {}).get("violations", [])
+            if not isinstance(vs, list) or not vs:
+                continue
+            v0 = vs[0]
+            ts = v0.get("timestamp")
+            temp = v0.get("temperature_c")
+            thr = v0.get("comfort_min_c")
+            room = meeting.get("room") or v0.get("room")
+            print(f"{indent}why: {room} at {ts}: temp={temp} < {thr} during meeting")
+            shown += 1
+        return
+
+    examples = details.get("examples")
+    if isinstance(examples, list) and examples:
+        for ex in examples[:3]:
+            if not isinstance(ex, dict):
+                continue
+            ts = ex.get("timestamp", "?")
+            # Compact one-liner.
+            items = []
+            for k in ("room", "room_id", "issue", "illumination_lux", "min_illumination_lux", "external_light_lux", "people_count", "meeting_now", "power_outage", "printer_state", "toner", "paper", "prev_toner", "prev_paper", "lights_on"):
+                if k in ex:
+                    items.append(f"{k}={ex.get(k)}")
+            if items:
+                print(f"{indent}why: {ts}: " + ", ".join(items))
+        return
+
+
 def print_agent_results(run, only_kinds: Optional[Set[AgentKind]] = None, header: str | None = None) -> None:
-    """Print results aggregated by agent type."""
+    """Print results aggregated by agent type + per-room/per-device breakdown."""
     aggregated = aggregate_results_by_agent(run)
 
     if only_kinds is not None:
@@ -250,6 +315,33 @@ def print_agent_results(run, only_kinds: Optional[Set[AgentKind]] = None, header
         for metric_name in sorted(agg["metrics"].keys()):
             m = agg["metrics"][metric_name]
             print(f"  {metric_name}: total={m['penalty_total']:.2f}  avg/min={m['penalty_avg_per_sim_minute']:.4f}")
+
+        # Per-room/per-device breakdown (helps explain "a lot of points" when multiple rooms/devices contribute).
+        # This does NOT change scoring; it only shows where the total came from.
+        per_subject = []
+        for sr in run.subjects:
+            k = _subject_to_agent_kind(sr.subject.kind)
+            if k != agent_kind:
+                continue
+            if only_kinds is not None and k not in only_kinds:
+                continue
+            per_subject.append(sr)
+
+        if per_subject:
+            # Always print breakdown so it's obvious which room/device is contributing.
+            per_subject.sort(key=lambda r: ((r.subject.room_name or ""), r.subject.subject_id))
+            for sr in per_subject:
+                print(
+                    f"    { _format_subject_label(sr) }: "
+                    f"total={sr.penalty_total:.2f}  avg/min={sr.penalty_avg_per_sim_minute:.4f}"
+                )
+                for ms in sorted(sr.metrics, key=lambda x: x.metric_name):
+                    print(
+                        f"      {ms.metric_name}: total={ms.penalty_total:.2f}  "
+                        f"avg/min={ms.penalty_avg_per_sim_minute:.4f}"
+                    )
+                    if ms.penalty_total > 0:
+                        _print_metric_triggers(ms.details, indent="        ")
 
     print()
 
@@ -657,6 +749,23 @@ async def run_sequence(
                 warmup_seconds=s.warmup_seconds,
                 processes=procs,
             )
+            # AI validation: warn if AI scenario produced no detectable activity for its target kind(s).
+            if is_ai_scenario_name(s.name):
+                aggregated = aggregate_results_by_agent(run)
+                expected = set(s.kinds)
+                if not any(k in aggregated for k in expected):
+                    agent_proc = next((p for p in procs if p.name != "OrSimulator"), None)
+                    lp = agent_proc.log_path() if agent_proc else None
+                    logger.warning(
+                        "AI scenario '%s' produced no detectable activity for %s (seed=%s). "
+                        "Agent may have failed to control the simulator or made no changes. "
+                        "exit_code=%s  log=%s",
+                        s.name,
+                        ", ".join(sorted(k.value for k in expected)),
+                        seed,
+                        agent_proc.exit_code() if agent_proc else None,
+                        str(lp) if lp else "-",
+                    )
             print_agent_results(
                 run,
                 only_kinds=s.kinds,

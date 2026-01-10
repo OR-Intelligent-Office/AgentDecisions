@@ -38,23 +38,40 @@ class EnvironmentCollector:
                     return None
 
                 data = await response.json()
-                return self._parse_environment_state(data)
+                return await self._parse_environment_state(data)
         except Exception as e:
             logger.error(f"Error collecting snapshot: {e}")
             return None
 
-    def _parse_environment_state(self, data: dict) -> EnvironmentSnapshot:
+    async def _parse_environment_state(self, data: dict) -> EnvironmentSnapshot:
         try:
             sim_time_str = data.get("simulationTime", "")
             simulation_time = datetime.fromisoformat(sim_time_str.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             simulation_time = datetime.now()
 
-        is_heating = bool(data.get("isHeating", False))
         external_temperature_c = float(data.get("externalTemperature", 0.0) or 0.0)
-        daylight_intensity = float(data.get("daylightIntensity", 1.0) or 1.0)
+        external_light_lux = float(data.get("externalLightLux", 0.0) or 0.0)
+        daylight_intensity = max(0.0, min(1.0, external_light_lux / 10000.0))
         rooms_data = data.get("rooms", [])
         rooms: List[RoomState] = []
+
+        # Fetch per-room heating states (OrSimulator doesn't include them in /state).
+        heating_by_room: dict[str, bool] = {}
+        try:
+            session = await self._get_session()
+            async def _fetch(room_id: str) -> None:
+                try:
+                    async with session.get(f"{self.simulator_url}/api/environment/heating/rooms/{room_id}") as resp:
+                        if resp.status == 200:
+                            payload = await resp.json()
+                            heating_by_room[room_id] = bool(payload.get("isHeating", False))
+                except Exception:
+                    return
+
+            await asyncio.gather(*[_fetch(r.get("id", "")) for r in rooms_data if r.get("id")])
+        except Exception:
+            pass
 
         for room_data in rooms_data:
             room_id = room_data.get("id", "")
@@ -137,16 +154,20 @@ class EnvironmentCollector:
                 people_count=room_data.get("peopleCount", 0),
                 meetings=meetings,
                 temperature_c=temperature_c,
+                illumination_lux=float(room_data.get("illumination", 0.0) or 0.0),
+                is_heating=heating_by_room.get(room_id, False),
                 timestamp=simulation_time,
             )
             rooms.append(room_state)
 
+        is_heating_any = any(r.is_heating for r in rooms)
         return EnvironmentSnapshot(
             simulation_time=simulation_time,
             rooms=rooms,
             external_temperature_c=external_temperature_c,
             power_outage=data.get("powerOutage", False),
-            is_heating=is_heating,
+            external_light_lux=external_light_lux,
+            is_heating=is_heating_any,
             daylight_intensity=daylight_intensity,
             timestamp=datetime.now(),
         )
